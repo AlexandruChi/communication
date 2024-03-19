@@ -21,8 +21,6 @@
 #define or ||
 #endif // or
 
-#define WAIT_CYCLES 100
-
 #define GET_BIT(X, Y) ((X) & (Y)) 
 
 #define INPUT_BIT(X) GET_BIT((X), 0b00000001)
@@ -96,8 +94,6 @@ void *connectionThreadMain(void *arg) {
                 pthread_mutex_unlock(&connectionThread->mutex);
             }
         }
-        // waits for new data to become available
-        sleep(WAIT_CYCLES);
         pthread_mutex_lock(&connectionThread->mutex);
     }
     pthread_mutex_unlock(&connectionThread->mutex);
@@ -273,6 +269,7 @@ bool getConnectionData(const Connection connection, void *dest) {
         return false;
     }
     memcpy(dest, connectionThread->data, connectionThread->dataSize);
+    connectionThread->newData = false;
     pthread_mutex_unlock(&connectionThread->mutex);
     return true;
 }
