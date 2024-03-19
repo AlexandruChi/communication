@@ -9,9 +9,9 @@
 
 #include <stdio.h>
 
-/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
-/* Functions that use Connection data type are the ones suposed to be used in the program. */
-/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ * Functions that use Connection data type are the ones supposed to be used in the program *
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 #ifndef and
 #define and &&
@@ -21,17 +21,16 @@
 #define or ||
 #endif // or
 
-// TODO rename input thread to connection thread
+#define WAIT_CYCLES 100
 
-// TODO modify thread to run continously and connect to any avalible devices
+#define GET_BIT(X, Y) ((X) & (Y)) 
 
-// TODO add errors
+#define INPUT_BIT(X) GET_BIT((X), 0b00000001)
+#define SERVER_BIT(X) GET_BIT((X), 0b00000010)
 
-// TODO fix AF_LOCAL sockets if they crash (or make the program not crash)
+// TODO modify thread to run continuously and connect to any available devices
 
-// TODO create python suport
-
-// TODO stop ading TODOs
+// TODO add error handling
 
 typedef void* Connection;
 
@@ -47,7 +46,7 @@ struct ConnectionThread {
     void *socketData;
     size_t dataSize;
     
-    // shered variables
+    // shared variables
     bool running;
     bool connected;
     bool newData;
@@ -56,73 +55,76 @@ struct ConnectionThread {
 
 uint64_t createConnectionThreadSocket(const void* socketData, bool server, bool network);
 
-void *inputThreadMain(void *arg) {
-    struct ConnectionThread *inputThread = (struct ConnectionThread*)arg;
+void *connectionThreadMain(void *arg) {
+    struct ConnectionThread *connectionThread = (struct ConnectionThread*)arg;
 
     // allocate memory
-    void *data = malloc(inputThread->dataSize);
+    void *data = malloc(connectionThread->dataSize);
     if (!data) {
         exit(1);
     }
     
-    long long sockets = createConnectionThreadSocket(inputThread->socketData, inputThread->server, inputThread->network);
-    pthread_mutex_lock(&inputThread->mutex);
-    inputThread->connected = true;
-    pthread_mutex_unlock(&inputThread->mutex);
+    long long sockets = createConnectionThreadSocket(connectionThread->socketData, connectionThread->server, connectionThread->network);
+    pthread_mutex_lock(&connectionThread->mutex);
+    connectionThread->connected = true;
+    pthread_mutex_unlock(&connectionThread->mutex);
 
     int socketfd, serverfd;
     memcpy(&socketfd, &sockets, sizeof(int));
     memcpy(&serverfd, &sockets + sizeof(int), sizeof(int));
 
-    // TODO inprove performance of main loop or create 2 types of thread main for input and output
+    // TODO create 2 types of thread main for input and output
 
     // main loop
-    pthread_mutex_lock(&inputThread->mutex);
-    while(inputThread->running) {
-        pthread_mutex_unlock(&inputThread->mutex);
-        if (inputThread->input) {
-            recv(socketfd, data, inputThread->dataSize, 0);
-            pthread_mutex_lock(&inputThread->mutex);
-            memcpy(inputThread->data, data, inputThread->dataSize);
-            inputThread->newData = true;
+    pthread_mutex_lock(&connectionThread->mutex);
+    while(connectionThread->running) {
+        pthread_mutex_unlock(&connectionThread->mutex);
+        if (connectionThread->input) {
+            recv(socketfd, data, connectionThread->dataSize, 0);
+            pthread_mutex_lock(&connectionThread->mutex);
+            memcpy(connectionThread->data, data, connectionThread->dataSize);
+            connectionThread->newData = true;
+            pthread_mutex_unlock(&connectionThread->mutex);
         } else {
-            pthread_mutex_lock(&inputThread->mutex);
-            if (inputThread->newData) {
-                memcpy(data, inputThread->data, inputThread->dataSize);
-                pthread_mutex_unlock(&inputThread->mutex);
-                send(socketfd, data, inputThread->dataSize, 0);
-                inputThread->newData = false;
-                pthread_mutex_lock(&inputThread->mutex);
+            pthread_mutex_lock(&connectionThread->mutex);
+            if (connectionThread->newData) {
+                memcpy(data, connectionThread->data, connectionThread->dataSize);
+                pthread_mutex_unlock(&connectionThread->mutex);
+                send(socketfd, data, connectionThread->dataSize, 0);
+                pthread_mutex_lock(&connectionThread->mutex);
+                connectionThread->newData = false;
+                pthread_mutex_unlock(&connectionThread->mutex);
             }
         }
+        // waits for new data to become available
+        sleep(WAIT_CYCLES);
+        pthread_mutex_lock(&connectionThread->mutex);
     }
-    pthread_mutex_unlock(&inputThread->mutex);
+    pthread_mutex_unlock(&connectionThread->mutex);
 
     free(data);
     close(socketfd);
 
-    if (inputThread->server) {
+    if (connectionThread->server) {
         close(serverfd);
     }
     
-    if (!inputThread->network) {
-        unlink(inputThread->socketData);
+    if (!connectionThread->network) {
+        unlink(connectionThread->socketData);
     }
     
-    pthread_mutex_lock(&inputThread->mutex);
-    inputThread->connected = 0;
-    pthread_mutex_unlock(&inputThread->mutex);
+    pthread_mutex_lock(&connectionThread->mutex);
+    connectionThread->connected = 0;
+    pthread_mutex_unlock(&connectionThread->mutex);
 
     return NULL;
 }
 
-// returns the file descriptor for the client
-// function return a 8 byte number where the first 4 bytes is the file descriptor of the client
-// the last 4 bytes of the number reprezent the server file descriptor
+/* returns the file descriptor for the client
+ * function return a 8 byte number where the first 4 bytes is the file descriptor of the client
+ * the last 4 bytes of the number represent the server file descriptor */
 uint64_t createConnectionThreadSocket(const void* socketData, bool server, bool network) {
     uint64_t socketfd = socket((network ? AF_INET : AF_LOCAL), SOCK_STREAM, 0);
-
-    // convert socketData to sockaddr
     struct sockaddr *socketaddr;
     if (network) {
         if (!(socketaddr = malloc(sizeof(struct sockaddr_in)))) {
@@ -144,7 +146,7 @@ uint64_t createConnectionThreadSocket(const void* socketData, bool server, bool 
     }
 
     if (server) {
-        if (network) {
+        if (!network) {
             unlink(socketData);
         }
         bind((int)socketfd, socketaddr, sizeof(*socketaddr));
@@ -161,31 +163,31 @@ uint64_t createConnectionThreadSocket(const void* socketData, bool server, bool 
     return socketfd;
 }
 
-// creates and starts the connection thread and socket
-// dataSize reprezents the maximum size of the data it can revice
-// suports AF_LOCAL/AF_UNIX (is network is false) and AF_INET (if network is true)
-// const void* socket points to file name or host name depending on the type of socket
-// if host name os used for the soket the first 2 bytes reprezent the port (in_port_t)
-// for server the host is the adress on witch the server listens for connesction
-// to lisne to any connection the host should be set to a empty string
+/* creates and starts the connection thread and socket
+ * dataSize represents the maximum size of the data it can receive
+ * supports AF_LOCAL/AF_UNIX (is network is false) and AF_INET (if network is true)
+ * const void* socket points to file name or host name depending on the type of socket
+ * if host name os used for the socket the first 2 bytes represent the port (in_port_t)
+ * for server the host is the address on witch the server listens for connection
+ * to listen to any connection the host should be set to a empty string */
 struct ConnectionThread *createConnectionThread(const void *socketData, size_t dataSize, bool input, bool network, bool server) {
-    struct ConnectionThread *inputThread = (struct ConnectionThread*)malloc(sizeof(struct ConnectionThread));
-    if (!inputThread) {
+    struct ConnectionThread *connectionThread = (struct ConnectionThread*)malloc(sizeof(struct ConnectionThread));
+    if (!connectionThread) {
         exit(1);
     }
     
-    inputThread->running = true;
-    inputThread->connected = false;
-    inputThread->dataSize = dataSize;
-    inputThread->server = server;
-    inputThread->network = network;
-    inputThread->input = input;
-    inputThread->newData = false;
+    connectionThread->running = true;
+    connectionThread->connected = false;
+    connectionThread->dataSize = dataSize;
+    connectionThread->server = server;
+    connectionThread->network = network;
+    connectionThread->input = input;
+    connectionThread->newData = false;
 
-    if (pthread_mutex_init(&inputThread->mutex, NULL)) {
+    if (pthread_mutex_init(&connectionThread->mutex, NULL)) {
         exit(1);
     }
-    if (pthread_cond_init(&inputThread->cond, NULL)) {
+    if (pthread_cond_init(&connectionThread->cond, NULL)) {
         exit(1);
     }
 
@@ -197,48 +199,48 @@ struct ConnectionThread *createConnectionThread(const void *socketData, size_t d
         socketSize = strlen(socketData);
     }
 
-    if (!(inputThread->socketData = malloc(socketSize))) {
+    if (!(connectionThread->socketData = malloc(socketSize))) {
         exit(1);
     }
 
-    memcpy(inputThread->socketData, socketData, socketSize);
+    memcpy(connectionThread->socketData, socketData, socketSize);
 
-    if (!(inputThread->data = malloc(dataSize))) {
+    if (!(connectionThread->data = malloc(dataSize))) {
         exit(1);
     }
 
-    if (pthread_create(&inputThread->threadID, NULL, inputThreadMain, inputThread)) {
+    if (pthread_create(&connectionThread->threadID, NULL, connectionThreadMain, connectionThread)) {
         exit(1);
     }
 
-    return inputThread;
+    return connectionThread;
 }
 
-/* User functions. */
+/* User functions */
 
-// creates a AF_LOCAL/AF_UNIX connection where socket parameter is the path to the socket file
-// size of data reprezents the size of the structure, variable or buffer send and recived
-Connection createLocalConnection(const char* socket, bool input, bool server, size_t sizeOfData) {
-    return createConnectionThread(socket, sizeOfData, input, false, server);
+/* creates a AF_LOCAL/AF_UNIX connection where socket parameter is the path to the socket file
+ * size of data represents the size of the structure, variable or buffer send and received */
+Connection createLocalConnection(const char* socket, size_t sizeOfData, uint8_t flags) {
+    return createConnectionThread(socket, sizeOfData, INPUT_BIT(flags), false, SERVER_BIT(flags));
 }
 
-// creates a AF_INET connection whith a ip and a port
-// if connection is server ip can be left as a empty string ("" or "\0") to listen for connections from any ip
-// alternativly the ip can be set to 0.0.0.0
-// size of data reprezents the size of the structure, variable or buffer send and recived
-Connection createNetworkConnection(const char* ip, unsigned short port, bool input, bool server, size_t sizeOfData) {
+/* creates a AF_INET connection whit a ip and a port
+ * if connection is server ip can be left as a empty string ("" or "\0") to listen for connections from any ip
+ * alternatively the ip can be set to 0.0.0.0
+ * size of data represents the size of the structure, variable or buffer send and received */
+Connection createNetworkConnection(const char* ip, unsigned short port, size_t sizeOfData, uint8_t flags) {
     void* socket = malloc(strlen(ip) + sizeof(port));
     if (!socket) {
         exit(1);
     }
     memcpy(socket, &port, sizeof(port));
     strcpy(socket + sizeof(port), ip);
-    return createConnectionThread(socket, sizeOfData, input, true, server);
+    return createConnectionThread(socket, sizeOfData, INPUT_BIT(flags), true, SERVER_BIT(flags));
 }
 
-// sends stop comand to thread and waits for thread to finish
-// dealocates all thread allocated memory
-// dealocates connection variable and set its value to NULL
+/* sends stop comand to thread and waits for thread to finish
+ * deallocates all thread allocated memory
+ * deallocates connection variable and set its value to NULL */
 void destroyConnection(Connection *connection) {
     struct ConnectionThread *connectionThread = (struct ConnectionThread*)(*connection);
     pthread_mutex_lock(&connectionThread->mutex);
@@ -258,13 +260,11 @@ void destroyConnection(Connection *connection) {
     *connection = NULL;
 }
 
-// TODO make better system for reciving data
-
-// if data was recived function return true else false
-// when new data is recived the old one is overwriten
-// copies the data from the thread memory into caller thread memory
-// local copy is crated to alow data to be used while the thread receves new data
-// dest should be the same type as the data set when creating the thread
+/* if data was received function return true else false
+ * when new data is received the old one is overwritten
+ * copies the data from the thread memory into caller thread memory
+ * local copy is crated to allow data to be used while the thread receives new data
+ * dest should be the same type as the data set when creating the thread */
 bool getConnectionData(const Connection connection, void *dest) {
     struct ConnectionThread *connectionThread = (struct ConnectionThread*)connection;
     pthread_mutex_lock(&connectionThread->mutex);
@@ -277,10 +277,10 @@ bool getConnectionData(const Connection connection, void *dest) {
     return true;
 }
 
-// if data was set and not send the fucntion waits for data to be send
-// copies the data from the caller thread memory into thread memory
-// local copy is crated to alow caller thread to continue execution while the thread sends data
-// src should be the same type as the data set when creating the thread
+/* if data was set and not send the function waits for data to be send
+ * copies the data from the caller thread memory into thread memory
+ * local copy is crated to allow caller thread to continue execution while the thread sends data
+ * src should be the same type as the data set when creating the thread */
 void setConnectionData(const Connection connection, void *src) {
     struct ConnectionThread *connectionThread = (struct ConnectionThread*)connection;
     pthread_mutex_lock(&connectionThread->mutex);
@@ -289,10 +289,10 @@ void setConnectionData(const Connection connection, void *src) {
     pthread_mutex_unlock(&connectionThread->mutex);
 }
 
-// check if connection exists and if it is connected or not
-// can be used to check if the thread is still waiting to connect or the other end is closed
-// checking if device has connected only works for network connection
-// checking if connection is closed works for any connection
+/* check if connection exists and if it is connected or not
+ * can be used to check if the thread is still waiting to connect or the other end is closed
+ * checking if device has connected only works for network connection
+ * checking if connection is closed works for any connection */
 bool isConnected(const Connection connection) {
     if (connection) {
         pthread_mutex_lock(&((struct ConnectionThread*)connection)->mutex);
